@@ -81,31 +81,52 @@ AuthCheck('', 'login.php');
                     $maxPage = ceil($countClients / $maxClients);
                     $minPage = 1;
 
-                    // Ensure currentPage is within valid range
-                    if ($currentPage < $minPage) $currentPage = $minPage;
-                    if ($currentPage > $maxPage) $currentPage = $maxPage;
-
-                    echo '<div class="pagination">';
-                    
-                    // Кнопка "Назад"
-                    if ($currentPage > $minPage) {
-                        $Prev = $currentPage - 1;
-                        echo "<a href='?page=$Prev' class='pagination__btn' title='Предыдущая страница'><i class='fa fa-arrow-left' aria-hidden='true'></i></a>";
+                    // Build pagination URL with preserved search parameters
+                    $searchParams = '';
+                    if (isset($_GET['search_name'])) {
+                        $searchParams .= '&search_name=' . urlencode($_GET['search_name']);
+                    }
+                    if (isset($_GET['search'])) {
+                        $searchParams .= '&search=' . urlencode($_GET['search']);
+                    }
+                    if (isset($_GET['sort'])) {
+                        $searchParams .= '&sort=' . urlencode($_GET['sort']);
                     }
 
-                    // Нумерованная пагинация
+                    // Normalize currentPage
+                    if ($currentPage < $minPage || !is_numeric($currentPage)) {
+                        $currentPage = $minPage;
+                        header("Location: ?page=$currentPage" . $searchParams);
+                        exit;
+                    }
+                    if ($currentPage > $maxPage) {
+                        $currentPage = $maxPage;
+                        header("Location: ?page=$currentPage" . $searchParams);
+                        exit;
+                    }
+                    
+                    // Wrap pagination in container
+                    echo "<div class='pagination-container'>";
+                    
+                    // Always show prev button, but disable if on first page
+                    $prevDisabled = ($currentPage <= $minPage) ? " disabled" : "";
+                    $Prev = $currentPage - 1;
+                    echo "<a href='?page=$Prev" . $searchParams . "'$prevDisabled><i class='fa fa-arrow-left' aria-hidden='true'></i></a>";
+
+                    // Show numbered pagination buttons
+                    echo "<div class='pagination'>";
                     for ($i = 1; $i <= $maxPage; $i++) {
-                        $activeClass = ($i === $currentPage) ? 'pagination__btn--active' : '';
-                        echo "<a href='?page=$i' class='pagination__btn $activeClass'>$i</a>";
+                        $activeClass = ($i === $currentPage) ? " class='active'" : "";
+                        echo "<a href='?page=$i" . $searchParams . "'$activeClass>$i</a>";
                     }
+                    echo "</div>";
 
-                    // Кнопка "Вперед"
-                    if ($currentPage < $maxPage) {
-                        $Next = $currentPage + 1;
-                        echo "<a href='?page=$Next' class='pagination__btn' title='Следующая страница'><i class='fa fa-arrow-right' aria-hidden='true'></i></a>";
-                    }
-                    
-                    echo '</div>';
+                    // Always show next button, but disable if on last page
+                    $nextDisabled = ($currentPage >= $maxPage) ? " disabled" : "";
+                    $Next = $currentPage + 1;
+                    echo "<a href='?page=$Next" . $searchParams . "'$nextDisabled><i class='fa fa-arrow-right' aria-hidden='true'></i></a>";
+
+                    echo "</div>"; // Close pagination-container
                 ?>
                 <table>
                     <thead>
@@ -131,7 +152,7 @@ AuthCheck('', 'login.php');
 
                         ?>
                     </tbody>
-                </table>
+            </table>
             </div>
         </section>
     </main>
@@ -145,22 +166,22 @@ AuthCheck('', 'login.php');
               <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
             </header>
             <main class="modal__content" id="modal-1-content">
-                <form action="api/clients/AddClients.php" method="POST" class="modal__form" id="addClientForm">
+                <form action="api/clients/AddClients.php" method="POST" class="modal__form">
                     <div class="modal__form-group">
                         <label for="fullname">ФИО</label>
-                        <input type="text" id="fullname" name="fullname" required>
+                        <input type="text" id="fullname" name="fullname">
                     </div>
                     <div class="modal__form-group">
                         <label for="email">Почта</label>
-                        <input type="email" id="email" name="email" required pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$">
+                        <input type="email" id="email" name="email">
                     </div>
                     <div class="modal__form-group">
                         <label for="phone">Телефон</label>
-                        <input type="tel" id="phone" name="phone" required pattern="[0-9]+">
+                        <input type="tel" id="phone" name="phone">
                     </div>
                     <div class="modal__form-group">
                         <label for="birthday">День рождения</label>
-                        <input type="date" id="birthday" name="birthday" required max="<?php echo date('Y-m-d'); ?>">
+                        <input type="date" id="birthday" name="birthday">
                     </div>
                     <div class="modal__form-actions">
                         <button type="submit" class="modal__btn modal__btn-primary">Создать</button>
@@ -187,7 +208,8 @@ AuthCheck('', 'login.php');
           </div>
         </div>
       </div>
-      <div class="modal micromodal-slide" id="edit-modal" aria-hidden="true">
+      <div class="modal micromodal-slide <?php
+        if (isset($_GET['edit-user']) && !empty($_GET['edit-user'])) {echo ' open';}?>" id="edit-modal" aria-hidden="true">
         <div class="modal__overlay" tabindex="-1" data-micromodal-close>
           <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
             <header class="modal__header">
@@ -197,18 +219,32 @@ AuthCheck('', 'login.php');
               <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
             </header>
             <main class="modal__content" id="modal-1-content">
-                <form class="modal__form">
+                <?php
+                    if (isset($_GET['edit-user']) && !empty($_GET['edit-user'])) {
+                        $userId = $_GET['edit-user'];
+                        $userData = $DB->query("
+                            SELECT * FROM clients 
+                            WHERE id = '$userId'
+                        ")->fetchAll()[0];
+                    }
+                ?>
+                <form action="api/clients/EditClients.php" method="POST" class="modal__form">
+                    <input type="hidden" name="client_id" value="<?php echo $userData['id'] ?? ''; ?>">
                     <div class="modal__form-group">
                         <label for="fullname">ФИО</label>
-                        <input type="text" id="fullname" name="fullname">
+                        <input type="text" id="fullname" name="fullname" value="<?php echo $userData['name'] ?? ''; ?>">
                     </div>
                     <div class="modal__form-group">
                         <label for="email">Почта</label>
-                        <input type="email" id="email" name="email">
+                        <input type="email" id="email" name="email" value="<?php echo $userData['email'] ?? ''; ?>">
                     </div>
                     <div class="modal__form-group">
                         <label for="phone">Телефон</label>
-                        <input type="tel" id="phone" name="phone">
+                        <input type="tel" id="phone" name="phone" value="<?php echo $userData['phone'] ?? ''; ?>">
+                    </div>
+                    <div class="modal__form-group">
+                        <label for="birthday">День рождения</label>
+                        <input type="date" id="birthday" name="birthday" value="<?php echo $userData['birthday'] ?? ''; ?>">
                     </div>
                     <div class="modal__form-actions">
                         <button type="submit" class="modal__btn">Сохранить</button>
@@ -261,37 +297,83 @@ AuthCheck('', 'login.php');
             </div>
         </div>
     </div>
-
-    <div class="modal micromodal-slide
-        <?php
-        if (isset($_SESSION['clients_error']) && 
-        !empty($_SESSION['clients_error'])) {
-            echo 'open';
-        }
-        ?>
-    " id="error-modal" aria-hidden="true">
+    <div class="modal micromodal-slide<?php
+        if (isset($_GET['send-email']) && !empty($_GET['send-email'])) {echo ' open';}?>
+    " id="send-email-modal" aria-hidden="true">
         <div class="modal__overlay" tabindex="-1" data-micromodal-close>
             <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
                 <header class="modal__header">
                     <h2 class="modal__title" id="modal-1-title">
-                        Ошибка!
+                        Отправка письма
                     </h2>   
                     <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
                 </header>
                 <main class="modal__content" id="modal-1-content">
-                <?php
-                if (isset($_SESSION['clients_error'])
-                && !empty($_SESSION['clients_error'])) {
-                    echo $_SESSION['clients_error'];
+                    <form action="api/clients/SendEmail.php?email=<?php echo $_GET['send-email']; ?>" method="POST">
+                        <div class="modal__form-group">
+                            <label for="header">Обращение</label>
+                            <input type="text" id="header" name="header" value="Дорогие коллеги!">
+                        </div>
+                        <div class="modal__form-group">
+                            <label for="main">Тело письма</label>
+                            <textarea id="main" name="main" rows="5">Компания «Сибирский гостинец» - это российский производитель натуральных продуктов из экологически чистого сырья. Мы перерабатываем и реализуем дикорастущие лесные ягоды с применением инновационных технологий сублимации, а также выпускаем снековую продукцию (кедровый орех и сушеные грибы).
 
-                    $_SESSION['clients_error'] = '';
-                }
-                ?>
+Мы работаем с 2012 года, но уже наладили взаимовыгодные партнёрские отношения с крупными российскими торговыми сетями: «Азбука Вкуса», «Бахетле», «Звездный», «Лэнд», «Табрис» и другие. Нас ценят за высокое качество продукта и строгое соблюдение сроков. А мы ценим своих партнеров и всегда рады новым!
+
+Больше полезной информации о нашей компании и продукте вы найдете в презентации во вложении (либо по <a href="#">ссылке</a>).</textarea>
+                        </div>
+                        <div class="modal__form-group">
+                            <label for="footer">Футер</label>
+                            <input type="text" id="footer" name="footer" value="(3462) 77-40-59<br>
+<a href='mailto:info@ws-trade.ru' style='color: blue; text-decoration: underline;'>info@ws-trade.ru</a><br>
+<a href='https://сибирскийгостинец.рф' style='color: blue; text-decoration: underline;'>сибирскийгостинец.рф</a><br>
+628406, РФ, ХМАО-Югра,<br>
+г. Сургут, ул. Университетская, 4">
+                        </div>
+                        <div class="modal__form-actions">
+                            <button type="submit" class="modal__btn modal__btn-primary">Отправить</button>
+                            <button type="button" class="modal__btn modal__btn-secondary" data-micromodal-close>Отменить</button>
+                        </div>
+                    </form>
+
+                    <?php 
+                    if (isset($_GET['send-email']) && !empty($_GET['send-email'])) {
+                        
+                    }
+                    ?>
                 </main>
             </div>
         </div>
     </div>
     <script defer src="https://unpkg.com/micromodal/dist/micromodal.min.js"></script>
     <script defer src="scripts/initClientsModal.js"></script>
+    <script> //скрипт для модалок отправки письма и редактирования, чтобы не открывались при загрузке страницы
+    // Очищаем URL от параметра send-email при закрытии модального окна
+    document.querySelector('#send-email-modal .modal__close').addEventListener('click', function() {
+        let url = new URL(window.location.href);
+        url.searchParams.delete('send-email');
+        window.history.replaceState({}, '', url);
+    });
+
+    // Очищаем URL от параметра edit-user при закрытии модального окна
+    document.querySelector('#edit-modal .modal__close').addEventListener('click', function() {
+        let url = new URL(window.location.href);
+        url.searchParams.delete('edit-user');
+        window.history.replaceState({}, '', url);
+    });
+
+    // Если модальные окна были открыты, очищаем URL после загрузки страницы
+    window.addEventListener('load', function() {
+        let url = new URL(window.location.href);
+        if (url.searchParams.has('send-email')) {
+            url.searchParams.delete('send-email');
+            window.history.replaceState({}, '', url);
+        }
+        if (url.searchParams.has('edit-user')) {
+            url.searchParams.delete('edit-user');
+            window.history.replaceState({}, '', url);
+        }
+    });
+    </script>
 </body>
 </html>

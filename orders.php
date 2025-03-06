@@ -15,6 +15,35 @@ AuthCheck('', 'login.php');
 
 require_once 'api/helpers/InputDefaultValue.php';
 
+// Обработка состояния статуса заказов
+if (isset($_GET["search_status"])) {
+    $_SESSION["search_status"] = $_GET["search_status"];
+} else if (!isset($_SESSION["search_status"])) {
+    $_SESSION["search_status"] = "all"; // По умолчанию показываем все заказы
+}
+
+// Обработка кнопки сброса
+if (isset($_GET['reset'])) {
+    $_SESSION["search_status"] = "all"; // По умолчанию показываем все заказы
+    header("Location: orders.php");
+    exit;
+}
+
+// Добавляем параметры в URL пагинации
+$searchParams = '';
+if (isset($_GET['search_name'])) {
+    $searchParams .= '&search_name=' . urlencode($_GET['search_name']);
+}
+if (isset($_GET['search'])) {
+    $searchParams .= '&search=' . urlencode($_GET['search']);
+}
+if (isset($_GET['sort'])) {
+    $searchParams .= '&sort=' . urlencode($_GET['sort']);
+}
+if (isset($_SESSION['search_status'])) {
+    $searchParams .= '&search_status=' . urlencode($_SESSION['search_status']);
+}
+
 ?>
 
 <!DOCTYPE html>
@@ -67,18 +96,15 @@ require_once 'api/helpers/InputDefaultValue.php';
                     </select>
                     <div class="filter-controls">
                         <label>
-                            <input type="checkbox" name="show_inactive" 
-                                   <?php 
-                                   if (isset($_GET['show_inactive'])) {
-                                       $_SESSION['show_inactive'] = $_GET['show_inactive'];
-                                   }
-                                   echo (isset($_SESSION['show_inactive']) && $_SESSION['show_inactive']) ? 'checked' : ''; 
-                                   ?>>
-                            Показать неактивные заказы
+                            <select class="main__select" name="search_status" id="search_status">
+                                <option value="all" <?php echo ($_SESSION["search_status"] === "all" ? "selected" : ""); ?>>Все заказы</option>
+                                <option value="1" <?php echo ($_SESSION["search_status"] === "1" ? "selected" : ""); ?>>Активные заказы</option>
+                                <option value="0" <?php echo ($_SESSION["search_status"] === "0" ? "selected" : ""); ?>>Неактивные заказы</option>
+                            </select>
                         </label>
                     </div>
                     <button type="submit">Поиск</button>
-                    <a href="?" class="main__reset" onclick="<?php unset($_SESSION['show_inactive']); ?>">Сбросить</a>
+                    <a href="?" class="main__reset" onclick="' . session_unset() . '">Сбросить</a>
                 </form>
             </div>
         </section>
@@ -106,6 +132,75 @@ require_once 'api/helpers/InputDefaultValue.php';
                             require 'api/DB.php';
                             require_once 'api/orders/OutputOrders.php';
                             require_once 'api/orders/OrdersSearch.php';
+
+                            // Подсчет общего количества записей с учетом фильтров
+                            $search = isset($_GET['search']) ? strtolower($_GET['search']) : '';
+                            $whereClause = "";
+                            if (!empty($search)) {
+                                $whereClause = "WHERE (LOWER(clients.name) LIKE '%$search%' OR LOWER(products.name) LIKE '%$search%')";
+                            }
+
+                            // Добавляем условие статуса для подсчета
+                            if ($_SESSION["search_status"] == '1') {
+                                $whereClause = $whereClause ? $whereClause . " AND orders.status = '1'" : "WHERE orders.status = 1";
+                            } elseif ($_SESSION["search_status"] == '0') {
+                                $whereClause = $whereClause ? $whereClause . " AND orders.status = '0'" : "WHERE orders.status = 0";
+                            }
+
+                            $countQuery = "SELECT COUNT(DISTINCT orders.id) as count 
+                                           FROM orders 
+                                           JOIN clients ON orders.client_id = clients.id 
+                                           JOIN order_items ON orders.id = order_items.order_id 
+                                           JOIN products ON order_items.product_id = products.id 
+                                           $whereClause";
+
+                            $countOrders = $DB->query($countQuery)->fetchAll()[0]['count'];
+
+                            $per_page = 5; // Количество записей на странице
+                            $maxPage = ceil($countOrders / $per_page);
+                            $currentPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+
+                            // Проверка и корректировка текущей страницы
+                            if ($currentPage < 1) {
+                                $currentPage = 1;
+                            } elseif ($currentPage > $maxPage) {
+                                $currentPage = $maxPage;
+                            }
+
+                            // Build pagination URL with preserved search parameters
+                            $searchParams = '';
+                            if (isset($_GET['search_name'])) {
+                                $searchParams .= '&search_name=' . urlencode($_GET['search_name']);
+                            }
+                            if (isset($_GET['search'])) {
+                                $searchParams .= '&search=' . urlencode($_GET['search']);
+                            }
+                            if (isset($_GET['sort'])) {
+                                $searchParams .= '&sort=' . urlencode($_GET['sort']);
+                            }
+
+                            // Wrap pagination in container
+                            echo "<div class='pagination-container'>";
+                            
+                            // Кнопка "Предыдущая"
+                            $prevDisabled = ($currentPage <= 1) ? " disabled" : "";
+                            $prevPage = $currentPage - 1;
+                            echo "<a href='?page=$prevPage$searchParams'$prevDisabled><i class='fa fa-arrow-left' aria-hidden='true'></i></a>";
+
+                            // Номера страниц
+                            echo "<div class='pagination'>";
+                            for ($i = 1; $i <= $maxPage; $i++) {
+                                $activeClass = ($i === $currentPage) ? " class='active'" : "";
+                                echo "<a href='?page=$i$searchParams'$activeClass>$i</a>";
+                            }
+                            echo "</div>";
+
+                            // Кнопка "Следующая"
+                            $nextDisabled = ($currentPage >= $maxPage) ? " disabled" : "";
+                            $nextPage = $currentPage + 1;
+                            echo "<a href='?page=$nextPage$searchParams'$nextDisabled><i class='fa fa-arrow-right' aria-hidden='true'></i></a>";
+
+                            echo "</div>";
 
                             $orders = OrdersSearch($_GET, $DB);
                             OutputOrders($orders);
@@ -183,39 +278,45 @@ require_once 'api/helpers/InputDefaultValue.php';
             </div>
         </div>
     </div>
-    <div class="modal micromodal-slide" id="edit-modal" aria-hidden="true">
+    <div class="modal micromodal-slide <?php
+        if (isset($_GET['edit-order']) && !empty($_GET['edit-order'])) {echo ' open';}?>" id="edit-modal" aria-hidden="true">
         <div class="modal__overlay" tabindex="-1" data-micromodal-close>
-          <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
-            <header class="modal__header">
-              <h2 class="modal__title" id="modal-1-title">
-                Редактировать клиента
-              </h2>
-              <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
-            </header>
-            <main class="modal__content" id="modal-1-content">
-                <form class="modal__form">
-                    <div class="modal__form-group">
-                        <label for="fullname">ФИО</label>
-                        <input type="text" id="fullname" name="fullname" required>
-                    </div>
-                    <div class="modal__form-group">
-                        <label for="email">Почта</label>
-                        <input type="email" id="email" name="email" required>
-                    </div>
-                    <div class="modal__form-group">
-                        <label for="phone">Телефон</label>
-                        <input type="tel" id="phone" name="phone" required>
-                    </div>
-                    <div class="modal__form-actions">
-                        <button type="submit" class="modal__btn">Сохранить</button>
-                        <button type="button" class="modal__btn" data-micromodal-close>Отменить</button>
-                    </div>
-                </form>
-            </main>
-          </div>
+            <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
+                <header class="modal__header">
+                    <h2 class="modal__title" id="modal-1-title">
+                        Редактировать статус заказа
+                    </h2>
+                    <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+                </header>
+                <main class="modal__content" id="modal-1-content">
+                    <?php
+                        if (isset($_GET['edit-order']) && !empty($_GET['edit-order'])) {
+                            $orderId = $_GET['edit-order'];
+                            $orderData = $DB->query("
+                                SELECT * FROM orders 
+                                WHERE id = '$orderId'
+                            ")->fetchAll()[0];
+                        }
+                    ?>
+                    <form action="api/orders/EditOrder.php" method="POST" class="modal__form">
+                        <input type="hidden" name="order_id" value="<?php echo $orderData['id'] ?? ''; ?>">
+                        <div class="modal__form-group">
+                            <label for="status">Статус заказа</label>
+                            <select name="status" id="status">
+                                <option value="1" <?php echo ($orderData['status'] ?? '') == 1 ? 'selected' : ''; ?>>Активный</option>
+                                <option value="0" <?php echo ($orderData['status'] ?? '') == 0 ? 'selected' : ''; ?>>Неактивный</option>
+                            </select>
+                        </div>
+                        <div class="modal__form-actions">
+                            <button type="submit" class="modal__btn modal__btn-primary">Сохранить</button>
+                            <button type="button" class="modal__btn modal__btn-secondary" data-micromodal-close>Отменить</button>
+                        </div>
+                    </form>
+                </main>
+            </div>
         </div>
-      </div>
-      <div class="modal micromodal-slide" id="history-modal" aria-hidden="true">
+    </div>
+    <div class="modal micromodal-slide" id="history-modal" aria-hidden="true">
         <div class="modal__overlay" tabindex="-1" data-micromodal-close>
             <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
                 <header class="modal__header">

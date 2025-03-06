@@ -84,36 +84,6 @@ require_once 'api/helpers/InputDefaultValue.php';
             <div class="container">
                 <h2 class="main__products__title">Список товаров</h2>
                 <button class="main__products__add" onclick="MicroModal.show('add-modal')"><i class="fa fa-plus-circle"></i></button>
-                <div class="pagination">
-                    <?php 
-                        require 'api/DB.php';
-                        require_once('api/product/ProductSearch.php');
-                        $result = ProductSearch($_GET, $DB);
-                        $products = $result['products'];
-                        $pagination = $result['pagination'];
-                        
-                        if ($pagination['currentPage'] > 1): 
-                    ?>
-                        <a href="?page=<?= $pagination['currentPage'] - 1 ?>&search=<?= $_GET['search'] ?? '' ?>&sort=<?= $_GET['sort'] ?? '' ?>&search_name=<?= $_GET['search_name'] ?? '' ?>" 
-                           class="pagination__btn" title="Предыдущая страница">
-                            <i class="fa fa-arrow-left"></i>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php for ($i = 1; $i <= $pagination['totalPages']; $i++): ?>
-                        <a href="?page=<?= $i ?>&search=<?= $_GET['search'] ?? '' ?>&sort=<?= $_GET['sort'] ?? '' ?>&search_name=<?= $_GET['search_name'] ?? '' ?>" 
-                           class="pagination__btn <?= $i === $pagination['currentPage'] ? 'pagination__btn--active' : '' ?>">
-                            <?= $i ?>
-                        </a>
-                    <?php endfor; ?>
-
-                    <?php if ($pagination['currentPage'] < $pagination['totalPages']): ?>
-                        <a href="?page=<?= $pagination['currentPage'] + 1 ?>&search=<?= $_GET['search'] ?? '' ?>&sort=<?= $_GET['sort'] ?? '' ?>&search_name=<?= $_GET['search_name'] ?? '' ?>" 
-                           class="pagination__btn" title="Следующая страница">
-                            <i class="fa fa-arrow-right"></i>
-                        </a>
-                    <?php endif; ?>
-                </div>
                 <table>
                     <thead>
                         <th>ИД</th>
@@ -130,12 +100,78 @@ require_once 'api/helpers/InputDefaultValue.php';
                         require 'api/DB.php';
                         require_once('api/product/ProductSearch.php');
                         require_once('api/product/OutputProduct.php');
-                        $result = ProductSearch($_GET, $DB);
-                        $products = $result['products'];
-                        $pagination = $result['pagination'];
+
+                        $currentPage = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+                        $maxProducts = 5;
+
+                        $countProducts = $DB->query("SELECT COUNT(*) as count FROM products")->fetchAll()[0]['count'];
+
+                        // Build search parameters string
+                        $searchParams = '';
+                        if (isset($_GET['search_name'])) {
+                            $searchParams .= '&search_name=' . urlencode($_GET['search_name']);
+                        }
+                        if (isset($_GET['search'])) {
+                            $searchParams .= '&search=' . urlencode($_GET['search']);
+                        }
+                        if (isset($_GET['sort'])) {
+                            $searchParams .= '&sort=' . urlencode($_GET['sort']);
+                        }
+
+                        $maxPage = ceil($countProducts / $maxProducts);
+                        $minPage = 1;
+
+                        // Normalize currentPage
+                        if ($currentPage < $minPage || !is_numeric($currentPage)) {
+                            $currentPage = $minPage;
+                            header("Location: ?page=$currentPage" . $searchParams);
+                            exit;
+                        }
+                        if ($currentPage > $maxPage) {
+                            $currentPage = $maxPage;
+                            header("Location: ?page=$currentPage" . $searchParams);
+                            exit;
+                        }
+
+                        // Wrap pagination in container
+                        echo "<div class='pagination-container'>";
                         
+                        // Prev button with link
+                        $prevPage = $currentPage - 1;
+                        $prevDisabled = ($currentPage <= $minPage) ? " disabled" : "";
+                        echo "<a href='?page=$prevPage" . $searchParams . "'$prevDisabled><i class='fa fa-arrow-left'></i></a>";
+
+                        // Numbered pagination
+                        echo "<div class='pagination'>";
+                        for ($i = 1; $i <= $maxPage; $i++) {
+                            if ($i == $currentPage) {
+                                echo "<span class='active'>$i</span>";
+                            } else {
+                                echo "<a href='?page=$i" . $searchParams . "'>$i</a>";
+                            }
+                        }
+                        echo "</div>";
+
+                        // Next button with link
+                        $nextPage = $currentPage + 1;
+                        $nextDisabled = ($currentPage >= $maxPage) ? " disabled" : "";
+                        echo "<a href='?page=$nextPage" . $searchParams . "'$nextDisabled><i class='fa fa-arrow-right'></i></a>";
+
+                        echo "</div>";
+
+                        $products = ProductSearch($_GET, $DB);
                         OutputProducts($products);
-                    ?>
+                        ?>
+                        <!-- <tr>
+                            <td>1</td>
+                            <td>Товар 1</td>
+                            <td>Описание товара 1</td>
+                            <td>1000₽</td>
+                            <td>10</td>
+                            <td onclick="MicroModal.show('qr-modal')"><i class="fa fa-qrcode"></i></td>
+                            <td onclick="MicroModal.show('edit-modal')"><i class="fa fa-pencil"></i></td>
+                            <td onclick="MicroModal.show('delete-modal')"><i class="fa fa-trash"></i></td>
+                        </tr> -->
                     </tbody>
                 </table>
             </div>
@@ -181,7 +217,8 @@ require_once 'api/helpers/InputDefaultValue.php';
     </div>
 
     <!-- Модальное окно редактирования товара -->
-    <div class="modal micromodal-slide" id="edit-modal" aria-hidden="true">
+    <div class="modal micromodal-slide <?php
+        if (isset($_GET['edit-product']) && !empty($_GET['edit-product'])) {echo ' open';}?>" id="edit-modal" aria-hidden="true">
         <div class="modal__overlay" tabindex="-1" data-micromodal-close>
             <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="modal-1-title">
                 <header class="modal__header">
@@ -191,22 +228,32 @@ require_once 'api/helpers/InputDefaultValue.php';
                     <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
                 </header>
                 <main class="modal__content" id="modal-1-content">
-                    <form class="modal__form">
+                    <?php
+                        if (isset($_GET['edit-product']) && !empty($_GET['edit-product'])) {
+                            $productId = $_GET['edit-product'];
+                            $productData = $DB->query("
+                                SELECT * FROM products 
+                                WHERE id = '$productId'
+                            ")->fetchAll()[0];
+                        }
+                    ?>
+                    <form action="api/product/EditProduct.php" method="POST" class="modal__form">
+                        <input type="hidden" name="product_id" value="<?php echo $productData['id'] ?? ''; ?>">
                         <div class="modal__form-group">
-                            <label for="edit-name">Название</label>
-                            <input type="text" id="edit-name" name="name" required>
+                            <label for="name">Название</label>
+                            <input type="text" id="name" name="name" value="<?php echo $productData['name'] ?? ''; ?>">
                         </div>
                         <div class="modal__form-group">
-                            <label for="edit-description">Описание</label>
-                            <textarea id="edit-description" name="description" required></textarea>
+                            <label for="description">Описание</label>
+                            <textarea id="description" name="description"><?php echo $productData['description'] ?? ''; ?></textarea>
                         </div>
                         <div class="modal__form-group">
-                            <label for="edit-price">Цена</label>
-                            <input type="number" id="edit-price" name="price" required>
+                            <label for="price">Цена</label>
+                            <input type="number" id="price" name="price" value="<?php echo $productData['price'] ?? ''; ?>">
                         </div>
                         <div class="modal__form-group">
-                            <label for="edit-quantity">Количество</label>
-                            <input type="number" id="edit-quantity" name="quantity" required>
+                            <label for="quantity">Количество</label>
+                            <input type="number" id="quantity" name="quantity" value="<?php echo $productData['stock'] ?? ''; ?>">
                         </div>
                         <div class="modal__form-actions">
                             <button type="submit" class="modal__btn modal__btn-primary">Сохранить</button>
